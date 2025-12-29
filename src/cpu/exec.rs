@@ -12,9 +12,9 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
         } // x0 hardwired
     };
 
-    let sign_extend = |val: u64, bits: u8| -> u64 {
+    let sign_extend = |val: i64, bits: u32| -> i64 {
         let shift = 64 - bits;
-        ((val << shift) as i64 >> shift) as u64
+        (val << shift) >> shift
     };
 
     match instr {
@@ -53,41 +53,41 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
             cpu.pc = pc.wrapping_add(off as u64);
         }
         Instr::LB { rd, rs1, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = mem!(pc, mem.read_u8(addr))?;
-            let value = sign_extend(byte as u64, 8);
+            let value = sign_extend(byte as i64, 8) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LBU { rd, rs1, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = mem!(pc, mem.read_u8(addr))?;
             let value = byte as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LH { rd, rs1, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let half = mem!(pc, mem.read_u16(addr))?;
-            let value = sign_extend(half as u64, 16);
+            let value = sign_extend(half as i64, 16) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LHU { rd, rs1, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let half = mem!(pc, mem.read_u16(addr))?;
             let value = half as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LD { rd, rs1, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = mem!(pc, mem.read_u64(addr))?;
             w(cpu, rd, word);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SB { rs1, rs2, off } => {
-            let addr = r(cpu, rs1).wrapping_add(off);
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = (r(cpu, rs2) & 0xff) as u8;
             mem!(pc, mem.write_u8(addr, byte))?;
             cpu.pc = pc.wrapping_add(4);
