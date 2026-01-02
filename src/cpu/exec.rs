@@ -92,7 +92,218 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
             mem!(pc, mem.write_u8(addr, byte))?;
             cpu.pc = pc.wrapping_add(4);
         }
-        _ => todo!("execute: unimplemented instruction {:?}", instr),
+        Instr::Xor { rd, rs1, rs2 } => {
+            w(cpu, rd, r(cpu, rs1) ^ r(cpu, rs2));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Or { rd, rs1, rs2 } => {
+            w(cpu, rd, r(cpu, rs1) | r(cpu, rs2));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::And { rd, rs1, rs2 } => {
+            w(cpu, rd, r(cpu, rs1) & r(cpu, rs2));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sll { rd, rs1, rs2 } => {
+            w(
+                cpu,
+                rd,
+                r(cpu, rs1).wrapping_shl((r(cpu, rs2) & 0x3f) as u32),
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Srl { rd, rs1, rs2 } => {
+            w(
+                cpu,
+                rd,
+                r(cpu, rs1).wrapping_shr((r(cpu, rs2) & 0x3f) as u32),
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sra { rd, rs1, rs2 } => {
+            w(
+                cpu,
+                rd,
+                ((r(cpu, rs1) as i64).wrapping_shr((r(cpu, rs2) & 0x3f) as u32)) as u64,
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Slt { rd, rs1, rs2 } => {
+            w(
+                cpu,
+                rd,
+                if (r(cpu, rs1) as i64) < (r(cpu, rs2) as i64) {
+                    1
+                } else {
+                    0
+                },
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sltu { rd, rs1, rs2 } => {
+            w(cpu, rd, if r(cpu, rs1) < r(cpu, rs2) { 1 } else { 0 });
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Xori { rd, rs1, imm } => {
+            w(cpu, rd, r(cpu, rs1) ^ (imm as u64));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Ori { rd, rs1, imm } => {
+            w(cpu, rd, r(cpu, rs1) | (imm as u64));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Andi { rd, rs1, imm } => {
+            w(cpu, rd, r(cpu, rs1) & (imm as u64));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Slli { rd, rs1, shamt } => {
+            w(cpu, rd, r(cpu, rs1).wrapping_shl((shamt & 0x3f) as u32));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Srli { rd, rs1, shamt } => {
+            w(cpu, rd, r(cpu, rs1).wrapping_shr((shamt & 0x3f) as u32));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Srai { rd, rs1, shamt } => {
+            w(
+                cpu,
+                rd,
+                ((r(cpu, rs1) as i64).wrapping_shr((shamt & 0x3f) as u32)) as u64,
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Slti { rd, rs1, imm } => {
+            w(
+                cpu,
+                rd,
+                if (r(cpu, rs1) as i64) < (imm as i64) {
+                    1
+                } else {
+                    0
+                },
+            );
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sltiu { rd, rs1, imm } => {
+            w(cpu, rd, if r(cpu, rs1) < (imm as u64) { 1 } else { 0 });
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::LW { rd, rs1, off } => {
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
+            let word = mem!(pc, mem.read_u32(addr))?;
+            let value = word as u64;
+            w(cpu, rd, value);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::SH { rs1, rs2, off } => {
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
+            let half = (r(cpu, rs2) & 0xffff) as u16;
+            mem!(pc, mem.write_u16(addr, half))?;
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::SW { rs1, rs2, off } => {
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
+            let word = (r(cpu, rs2) & 0xffff_ffff) as u32;
+            mem!(pc, mem.write_u32(addr, word))?;
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Blt { rs1, rs2, off } => {
+            cpu.pc = if (r(cpu, rs1) as i64) < (r(cpu, rs2) as i64) {
+                pc.wrapping_add(off as u64)
+            } else {
+                pc.wrapping_add(4)
+            };
+        }
+        Instr::Bge { rs1, rs2, off } => {
+            cpu.pc = if (r(cpu, rs1) as i64) >= (r(cpu, rs2) as i64) {
+                pc.wrapping_add(off as u64)
+            } else {
+                pc.wrapping_add(4)
+            };
+        }
+        Instr::Bltu { rs1, rs2, off } => {
+            cpu.pc = if r(cpu, rs1) < r(cpu, rs2) {
+                pc.wrapping_add(off as u64)
+            } else {
+                pc.wrapping_add(4)
+            };
+        }
+        Instr::Bgeu { rs1, rs2, off } => {
+            cpu.pc = if r(cpu, rs1) >= r(cpu, rs2) {
+                pc.wrapping_add(off as u64)
+            } else {
+                pc.wrapping_add(4)
+            };
+        }
+        Instr::Jalr { rd, rs1, off } => {
+            let target = r(cpu, rs1).wrapping_add(off as u64) & !1;
+            w(cpu, rd, pc.wrapping_add(4));
+            cpu.pc = target;
+        }
+        Instr::Auipc { rd, imm } => {
+            w(cpu, rd, pc.wrapping_add(imm as u64));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Ecall => todo!(),
+        Instr::Ebreak => todo!(),
+        Instr::Addiw { rd, rs1, imm } => {
+            let result = (r(cpu, rs1) as i64).wrapping_add(imm as i64);
+            w(cpu, rd, sign_extend(result, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Slliw { rd, rs1, shamt } => {
+            let result = (r(cpu, rs1) & 0xffff_ffff).wrapping_shl((shamt & 0x1f) as u32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Srliw { rd, rs1, shamt } => {
+            let result = (r(cpu, rs1) & 0xffff_ffff).wrapping_shr((shamt & 0x1f) as u32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sraiw { rd, rs1, shamt } => {
+            let result =
+                ((r(cpu, rs1) & 0xffff_ffff) as i32).wrapping_shr((shamt & 0x1f) as u32) as u32;
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Addw { rd, rs1, rs2 } => {
+            let result = (r(cpu, rs1) as i32).wrapping_add(r(cpu, rs2) as i32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Subw { rd, rs1, rs2 } => {
+            let result = (r(cpu, rs1) as i32).wrapping_sub(r(cpu, rs2) as i32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sllw { rd, rs1, rs2 } => {
+            let result = (r(cpu, rs1) as u32).wrapping_shl((r(cpu, rs2) & 0x1f) as u32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Srlw { rd, rs1, rs2 } => {
+            let result = (r(cpu, rs1) as u32).wrapping_shr((r(cpu, rs2) & 0x1f) as u32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Sraw { rd, rs1, rs2 } => {
+            let result = ((r(cpu, rs1) as i32).wrapping_shr((r(cpu, rs2) & 0x1f) as u32)) as i32;
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::LWU { rd, rs1, off } => {
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
+            let word = mem!(pc, mem.read_u32(addr))?;
+            let value = word as u64;
+            w(cpu, rd, value);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::SD { rs1, rs2, off } => {
+            let addr = r(cpu, rs1).wrapping_add(off as u64);
+            mem!(pc, mem.write_u64(addr, r(cpu, rs2)))?;
+            cpu.pc = pc.wrapping_add(4);
+        }
     }
 
     // Keep x0 pinned (extra safety)
