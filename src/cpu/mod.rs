@@ -5,21 +5,11 @@ pub mod trap;
 use crate::csr::CsrFile;
 use crate::mem::Memory;
 
-// Memory operation error handling macro
-// Converts MemError into Trap::Mem with PC context
-macro_rules! mem {
-    ($pc:expr, $expr:expr) => {
-        $expr.map_err(|e| $crate::cpu::trap::Trap::from_mem($pc, e))
-    };
-}
-
-pub(crate) use mem;
-
 #[derive(Default)]
 pub struct Cpu {
     pub regs: [u64; 32],
     pub pc: u64,
-    pub csrs: CsrFile,
+    pub csr: CsrFile,
 }
 
 pub struct Machine {
@@ -36,8 +26,10 @@ impl Machine {
     }
 
     pub fn step(&mut self) -> Result<(), trap::Trap> {
+        use trap::WithPc;
+
         // Fetch
-        let inst = mem!(self.cpu.pc, self.mem.read_u32(self.cpu.pc))?;
+        let inst = self.mem.read_u32(self.cpu.pc).with_pc(self.cpu.pc)?;
 
         // Decode
         let decoded = decode::decode(self.cpu.pc, inst)?;

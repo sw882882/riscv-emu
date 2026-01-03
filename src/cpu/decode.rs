@@ -66,6 +66,14 @@ pub enum Instr {
     LWU { rd: u8, rs1: u8, off: i64 },
     LD { rd: u8, rs1: u8, off: i64 },
     SD { rs1: u8, rs2: u8, off: i64 },
+
+    // CSR instructions
+    Csrrw { rd: u8, csr: u16, rs1: u8 },
+    Csrrs { rd: u8, csr: u16, rs1: u8 },
+    Csrrc { rd: u8, csr: u16, rs1: u8 },
+    Csrrwi { rd: u8, csr: u16, uimm: u8 },
+    Csrrsi { rd: u8, csr: u16, uimm: u8 },
+    Csrrci { rd: u8, csr: u16, uimm: u8 },
 }
 
 fn sign_extend(value: i64, bits: u32) -> i64 {
@@ -233,10 +241,51 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
         // i type environment
         0b1110011 => {
             let funct3 = ((inst >> 12) & 0x7) as u8;
-            let imm = (inst >> 20) as u32;
-            match (funct3, imm) {
-                (0x0, 0x000) => Ok(Instr::Ecall),
-                (0x0, 0x001) => Ok(Instr::Ebreak),
+            match funct3 {
+                0x0 => {
+                    let imm = inst >> 20;
+                    match imm {
+                        0x000 => Ok(Instr::Ecall),
+                        0x001 => Ok(Instr::Ebreak),
+                        _ => Err(Trap::IllegalInstruction { pc, inst }),
+                    }
+                }
+                0x1 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let rs1 = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrw { rd, csr, rs1 })
+                }
+                0x2 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let rs1 = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrs { rd, csr, rs1 })
+                }
+                0x3 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let rs1 = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrc { rd, csr, rs1 })
+                }
+                0x5 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let uimm = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrwi { rd, csr, uimm })
+                }
+                0x6 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let uimm = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrsi { rd, csr, uimm })
+                }
+                0x7 => {
+                    let rd = ((inst >> 7) & 0x1f) as u8;
+                    let csr = (inst >> 20) as u16;
+                    let uimm = ((inst >> 15) & 0x1f) as u8;
+                    Ok(Instr::Csrrci { rd, csr, uimm })
+                }
                 _ => Err(Trap::IllegalInstruction { pc, inst }),
             }
         }
