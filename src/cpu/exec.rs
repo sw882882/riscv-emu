@@ -1,9 +1,10 @@
+use super::IntoCpuResult;
 use super::decode::Instr;
 use super::trap::{Trap, WithPc};
-use crate::cpu::Cpu;
+use crate::cpu::{Cpu, CpuStepResult};
 use crate::mem::Memory;
 
-pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap> {
+pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), CpuStepResult> {
     let pc = cpu.pc;
 
     let r = |cpu: &Cpu, idx: u8| -> u64 { cpu.regs[idx as usize] };
@@ -55,42 +56,42 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
         }
         Instr::LB { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc(pc)?;
+            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
             let value = sign_extend(byte as i64, 8) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LBU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc(pc)?;
+            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
             let value = byte as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LH { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc(pc)?;
+            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
             let value = sign_extend(half as i64, 16) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LHU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc(pc)?;
+            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
             let value = half as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LD { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u64(addr).with_pc(pc)?;
+            let word = mem.read_u64(addr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, word);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SB { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = (r(cpu, rs2) & 0xff) as u8;
-            mem.write_u8(addr, byte).with_pc(pc)?;
+            mem.write_u8(addr, byte).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Xor { rd, rs1, rs2 } => {
@@ -191,7 +192,7 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
         }
         Instr::LW { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc(pc)?;
+            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
             let value = word as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
@@ -199,13 +200,13 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
         Instr::SH { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let half = (r(cpu, rs2) & 0xffff) as u16;
-            mem.write_u16(addr, half).with_pc(pc)?;
+            mem.write_u16(addr, half).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SW { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = (r(cpu, rs2) & 0xffff_ffff) as u32;
-            mem.write_u32(addr, word).with_pc(pc)?;
+            mem.write_u32(addr, word).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Blt { rs1, rs2, off } => {
@@ -245,8 +246,12 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
             w(cpu, rd, pc.wrapping_add(imm as u64));
             cpu.pc = pc.wrapping_add(4);
         }
-        Instr::Ecall => todo!(),
-        Instr::Ebreak => todo!(),
+        Instr::Ecall => {
+            return Err(CpuStepResult::Trapped(Trap::Ecall { pc }));
+        }
+        Instr::Ebreak => {
+            return Err(CpuStepResult::Trapped(Trap::Breakpoint { pc }));
+        }
         Instr::Addiw { rd, rs1, imm } => {
             let result = (r(cpu, rs1) as i64).wrapping_add(imm as i64);
             w(cpu, rd, sign_extend(result, 32) as u64);
@@ -295,63 +300,87 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), Trap
         }
         Instr::LWU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc(pc)?;
+            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
             let value = word as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SD { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            mem.write_u64(addr, r(cpu, rs2)).with_pc(pc)?;
+            mem.write_u64(addr, r(cpu, rs2))
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         // TODO: atomicity later
         Instr::Csrrw { rd, csr, rs1 } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
             let rs1_value = r(cpu, rs1);
-            cpu.csr.write(csr, rs1_value).with_pc(pc)?;
+            cpu.csr
+                .write(csr, rs1_value)
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrs { rd, csr, rs1 } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
             let rs1_value = r(cpu, rs1);
             if rs1 != 0 {
-                cpu.csr.set_bits(csr, rs1_value).with_pc(pc)?;
+                cpu.csr
+                    .set_bits(csr, rs1_value)
+                    .with_pc(pc)
+                    .into_cpu_result()?;
             }
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrc { rd, csr, rs1 } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
             let rs1_value = r(cpu, rs1);
             if rs1 != 0 {
-                cpu.csr.clear_bits(csr, rs1_value).with_pc(pc)?;
+                cpu.csr
+                    .clear_bits(csr, rs1_value)
+                    .with_pc(pc)
+                    .into_cpu_result()?;
             }
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrwi { rd, csr, uimm } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
-            cpu.csr.write(csr, uimm as u64).with_pc(pc)?;
+            cpu.csr
+                .write(csr, uimm as u64)
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrsi { rd, csr, uimm } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
             if uimm != 0 {
-                cpu.csr.set_bits(csr, uimm as u64).with_pc(pc)?;
+                cpu.csr
+                    .set_bits(csr, uimm as u64)
+                    .with_pc(pc)
+                    .into_cpu_result()?;
             }
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrci { rd, csr, uimm } => {
-            let csr_value = cpu.csr.read(csr).with_pc(pc)?;
+            let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
             if uimm != 0 {
-                cpu.csr.clear_bits(csr, uimm as u64).with_pc(pc)?;
+                cpu.csr
+                    .clear_bits(csr, uimm as u64)
+                    .with_pc(pc)
+                    .into_cpu_result()?;
             }
             cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Mret => {
+            let mepc = cpu.csr.read(0x341).with_pc(pc).into_cpu_result()?; // mepc
+            cpu.pc = mepc;
         }
     }
 

@@ -1,4 +1,19 @@
-use super::trap::Trap;
+use std::fmt;
+
+#[derive(Debug, Clone, Copy)]
+pub enum DecodeError {
+    InvalidOpcode { inst: u32 },
+    InvalidFunct { inst: u32 },
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DecodeError::InvalidOpcode { inst } => write!(f, "invalid opcode: 0x{:08x}", inst),
+            DecodeError::InvalidFunct { inst } => write!(f, "invalid function: 0x{:08x}", inst),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Instr {
@@ -74,6 +89,7 @@ pub enum Instr {
     Csrrwi { rd: u8, csr: u16, uimm: u8 },
     Csrrsi { rd: u8, csr: u16, uimm: u8 },
     Csrrci { rd: u8, csr: u16, uimm: u8 },
+    Mret,
 }
 
 fn sign_extend(value: i64, bits: u32) -> i64 {
@@ -81,7 +97,7 @@ fn sign_extend(value: i64, bits: u32) -> i64 {
     (value << shift) >> shift
 }
 
-pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
+pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
     let opcode = inst & 0x7f;
     match opcode {
         // r type
@@ -103,7 +119,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                 (0x5, 0x20) => Ok(Instr::Sra { rd, rs1, rs2 }),
                 (0x2, 0x00) => Ok(Instr::Slt { rd, rs1, rs2 }),
                 (0x3, 0x00) => Ok(Instr::Sltu { rd, rs1, rs2 }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         // i type
@@ -129,12 +145,12 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                     match funct7 {
                         0x00 => Ok(Instr::Srli { rd, rs1, shamt }),
                         0x20 => Ok(Instr::Srai { rd, rs1, shamt }),
-                        _ => Err(Trap::IllegalInstruction { pc, inst }),
+                        _ => Err(DecodeError::InvalidOpcode { inst }),
                     }
                 }
                 0x2 => Ok(Instr::Slti { rd, rs1, imm }),
                 0x3 => Ok(Instr::Sltiu { rd, rs1, imm }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         0b0000011 => {
@@ -152,7 +168,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                 // rv64 extensions
                 0x6 => Ok(Instr::LWU { rd, rs1, off: imm }),
                 0x3 => Ok(Instr::LD { rd, rs1, off: imm }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         // s type
@@ -172,7 +188,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                 0x2 => Ok(Instr::SW { rs1, rs2, off: imm }),
                 // rv64 extension
                 0x3 => Ok(Instr::SD { rs1, rs2, off: imm }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         //  b type
@@ -198,7 +214,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                 0x5 => Ok(Instr::Bge { rs1, rs2, off: imm }),
                 0x6 => Ok(Instr::Bltu { rs1, rs2, off: imm }),
                 0x7 => Ok(Instr::Bgeu { rs1, rs2, off: imm }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         // u type
@@ -235,7 +251,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
             let imm = sign_extend((inst >> 20) as i64, 12);
             match funct3 {
                 0x0 => Ok(Instr::Jalr { rd, rs1, off: imm }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         // i type environment
@@ -247,7 +263,8 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                     match imm {
                         0x000 => Ok(Instr::Ecall),
                         0x001 => Ok(Instr::Ebreak),
-                        _ => Err(Trap::IllegalInstruction { pc, inst }),
+                        0x302 => Ok(Instr::Mret),
+                        _ => Err(DecodeError::InvalidOpcode { inst }),
                     }
                 }
                 0x1 => {
@@ -286,7 +303,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                     let uimm = ((inst >> 15) & 0x1f) as u8;
                     Ok(Instr::Csrrci { rd, csr, uimm })
                 }
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         0b0011011 => {
@@ -302,7 +319,7 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                     let funct7 = ((imm >> 5) & 0x7f) as u8;
                     match funct7 {
                         0x00 => Ok(Instr::Slliw { rd, rs1, shamt }),
-                        _ => Err(Trap::IllegalInstruction { pc, inst }),
+                        _ => Err(DecodeError::InvalidOpcode { inst }),
                     }
                 }
                 0x5 => {
@@ -311,10 +328,10 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                     match funct7 {
                         0x00 => Ok(Instr::Srliw { rd, rs1, shamt }),
                         0x20 => Ok(Instr::Sraiw { rd, rs1, shamt }),
-                        _ => Err(Trap::IllegalInstruction { pc, inst }),
+                        _ => Err(DecodeError::InvalidOpcode { inst }),
                     }
                 }
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
         0b0111011 => {
@@ -329,9 +346,9 @@ pub fn decode(pc: u64, inst: u32) -> Result<Instr, Trap> {
                 (0x1, 0x00) => Ok(Instr::Sllw { rd, rs1, rs2 }),
                 (0x5, 0x00) => Ok(Instr::Srlw { rd, rs1, rs2 }),
                 (0x5, 0x20) => Ok(Instr::Sraw { rd, rs1, rs2 }),
-                _ => Err(Trap::IllegalInstruction { pc, inst }),
+                _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
-        _ => Err(Trap::IllegalInstruction { pc, inst }),
+        _ => Err(DecodeError::InvalidOpcode { inst }),
     }
 }
