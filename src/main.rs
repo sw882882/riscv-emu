@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ram_bytes = args.ram_mib * 1024 * 1024;
     let mut machine = riscv_emu::cpu::Machine::new(ram_bytes);
+    machine.max_insns = args.max_insns;
 
     let entry = riscv_emu::elf::load_elf_into_memory(&args.elf, &mut machine.mem)?;
     machine.cpu.pc = entry;
@@ -32,17 +33,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Minimal convention: x0 hardwired, others start 0.
     // You can also set up a stack pointer later if you want for your own test programs.
-    let mut executed: u64 = 0;
     loop {
-        if args.max_insns != 0 && executed >= args.max_insns {
-            break;
-        }
         if args.trace {
-            riscv_emu::debug::trace(&machine.cpu, executed);
+            riscv_emu::debug::trace(&machine.cpu, machine.executed);
         }
 
-        machine.step()?; // fetch-decode-execute
-        executed += 1;
+        // fetch-decode-execute
+        // handle halting conditions
+        match machine.step() {
+            Err(riscv_emu::cpu::CpuStepResult::Halt(reason)) => {
+                println!("CPU halted: {}", reason);
+                break;
+            }
+            Err(e) => {
+                eprintln!("CPU error: {}", e);
+                break;
+            }
+            Ok(()) => {}
+        }
     }
 
     Ok(())

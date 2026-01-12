@@ -16,16 +16,33 @@ pub struct Cpu {
 pub struct Machine {
     pub cpu: Cpu,
     pub mem: Memory,
-    // TODO: temp for riscv-tests
     pub host_exit_addr: Option<u64>,
+    pub max_insns: u64,
+    pub executed: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaltReason {
+    HostExit { gp: u64 },
+    MaxInsns,
+}
+
+impl std::fmt::Display for HaltReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HaltReason::HostExit { gp } => {
+                let status = if *gp == 1 { "PASS" } else { "FAIL" };
+                write!(f, "host exit [{}] (gp={})", status, gp)
+            }
+            HaltReason::MaxInsns => write!(f, "maximum instructions executed"),
+        }
+    }
 }
 
 pub enum CpuStepResult {
     Continue,
     Trapped(trap::Trap),
-    Halt,
-    // TODO: in the future
-    // Halt(reason: HaltReason),
+    Halt(HaltReason),
 }
 
 impl std::fmt::Display for CpuStepResult {
@@ -33,7 +50,7 @@ impl std::fmt::Display for CpuStepResult {
         match self {
             CpuStepResult::Continue => write!(f, "CPU continue"),
             CpuStepResult::Trapped(trap) => write!(f, "CPU trapped: {}", trap),
-            CpuStepResult::Halt => write!(f, "CPU halted"),
+            CpuStepResult::Halt(reason) => write!(f, "CPU halted ({})", reason),
         }
     }
 }
@@ -43,7 +60,7 @@ impl std::fmt::Debug for CpuStepResult {
         match self {
             CpuStepResult::Continue => write!(f, "Continue"),
             CpuStepResult::Trapped(trap) => write!(f, "Trapped({:?})", trap),
-            CpuStepResult::Halt => write!(f, "Halt"),
+            CpuStepResult::Halt(reason) => write!(f, "Halt({:?})", reason),
         }
     }
 }
@@ -67,6 +84,8 @@ impl Machine {
             cpu: Cpu::default(),
             mem: Memory::new(ram_bytes),
             host_exit_addr: None,
+            max_insns: 0,
+            executed: 0,
         }
     }
 
@@ -100,14 +119,26 @@ impl Machine {
         };
 
         // Execute
-        match exec::execute(&mut self.cpu, &mut self.mem, decoded) {
-            Ok(()) => Ok(()),
+        // TODO: temp for riscv-tests
+        match exec::execute(&mut self.cpu, &mut self.mem, decoded, self.host_exit_addr) {
+            Ok(()) => {}
+            Err(CpuStepResult::Halt(reason)) => {
+                self.executed += 1;
+                return Err(CpuStepResult::Halt(reason));
+            }
             Err(CpuStepResult::Trapped(trap)) => {
                 self.handle_trap(trap)?;
-                Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => return Err(e),
         }
+
+        // Increment instruction counter and check max_insns
+        self.executed += 1;
+        if self.max_insns != 0 && self.executed >= self.max_insns {
+            return Err(CpuStepResult::Halt(HaltReason::MaxInsns));
+        }
+
+        Ok(())
     }
 
     fn handle_trap(&mut self, trap: trap::Trap) -> Result<(), CpuStepResult> {

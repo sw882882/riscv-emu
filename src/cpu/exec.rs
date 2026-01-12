@@ -4,7 +4,12 @@ use super::trap::{Trap, WithPc};
 use crate::cpu::{Cpu, CpuStepResult};
 use crate::mem::Memory;
 
-pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), CpuStepResult> {
+pub fn execute(
+    cpu: &mut Cpu,
+    mem: &mut Memory,
+    instr: Instr,
+    host_exit_addr: Option<u64>,
+) -> Result<(), CpuStepResult> {
     let pc = cpu.pc;
 
     let r = |cpu: &Cpu, idx: u8| -> u64 { cpu.regs[idx as usize] };
@@ -206,6 +211,14 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), CpuS
         Instr::SW { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = (r(cpu, rs2) & 0xffff_ffff) as u32;
+            // host exit address check
+            // TODO: temp for riscv-tests
+            if let Some(exit_addr) = host_exit_addr {
+                if addr == exit_addr {
+                    let gp = r(cpu, 3); // x3 is gp (global pointer)
+                    return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
+                }
+            }
             mem.write_u32(addr, word).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
@@ -307,6 +320,13 @@ pub fn execute(cpu: &mut Cpu, mem: &mut Memory, instr: Instr) -> Result<(), CpuS
         }
         Instr::SD { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
+            // host exit address check
+            if let Some(exit_addr) = host_exit_addr {
+                if addr == exit_addr {
+                    let gp = r(cpu, 3); // x3 is gp (global pointer)
+                    return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
+                }
+            }
             mem.write_u64(addr, r(cpu, rs2))
                 .with_pc(pc)
                 .into_cpu_result()?;
