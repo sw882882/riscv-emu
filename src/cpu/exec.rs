@@ -69,7 +69,7 @@ pub fn execute(
         Instr::LBU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
-            let value = byte as u64;
+            let value = byte as u64; // Zero-extend from 8 to 64 bits
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
@@ -198,7 +198,7 @@ pub fn execute(
         Instr::LW { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
-            let value = word as u64;
+            let value = sign_extend(word as i64, 32) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
@@ -401,6 +401,11 @@ pub fn execute(
         Instr::Mret => {
             let mepc = cpu.csr.read(0x341).with_pc(pc).into_cpu_result()?; // mepc
             cpu.pc = mepc;
+        }
+        Instr::Fence => {
+            // Memory fence - for in-order execution, this is a no-op
+            cpu.pc = pc.wrapping_add(4);
+            // TODO: once multiple harts, implement proper fencing
         }
     }
 

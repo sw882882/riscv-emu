@@ -1,7 +1,7 @@
 use crate::mem::{MemError, Memory};
 use goblin::elf::{
-    header::{self, ELFCLASS64, ELFDATA2LSB, EM_RISCV, ET_DYN, ET_EXEC},
     Elf,
+    header::{self, ELFCLASS64, ELFDATA2LSB, EM_RISCV, ET_DYN, ET_EXEC},
 };
 use std::fs;
 
@@ -41,16 +41,14 @@ pub fn load_elf_into_memory(
             .checked_add(file_sz)
             .ok_or("program header file range overflow")?;
         if end > bytes.len() {
-            return Err(format!(
-                "segment outside file: off=0x{file_off:x} size=0x{file_sz:x}"
-            )
-            .into());
+            return Err(
+                format!("segment outside file: off=0x{file_off:x} size=0x{file_sz:x}").into(),
+            );
         }
         if ph.p_memsz < ph.p_filesz {
-            return Err(format!(
-                "p_memsz smaller than p_filesz for segment at off=0x{file_off:x}"
-            )
-            .into());
+            return Err(
+                format!("p_memsz smaller than p_filesz for segment at off=0x{file_off:x}").into(),
+            );
         }
 
         let seg_end = vaddr
@@ -78,4 +76,21 @@ pub fn load_elf_into_memory(
     }
 
     Ok(elf.entry)
+}
+
+/// Find the address of the "tohost" symbol in an ELF file.
+/// This is used by RISC-V tests to signal completion.
+pub fn find_tohost_symbol(path: &str) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    let bytes = fs::read(path)?;
+    let elf = Elf::parse(&bytes)?;
+
+    for sym in elf.syms.iter() {
+        if let Some(name) = elf.strtab.get_at(sym.st_name) {
+            if name == "tohost" {
+                return Ok(Some(sym.st_value));
+            }
+        }
+    }
+
+    Ok(None)
 }

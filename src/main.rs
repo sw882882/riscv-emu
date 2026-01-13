@@ -28,6 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let entry = riscv_emu::elf::load_elf_into_memory(&args.elf, &mut machine.mem)?;
     machine.cpu.pc = entry;
+
+    // Check for tohost symbol (used by RISC-V tests)
+    if let Some(tohost) = riscv_emu::elf::find_tohost_symbol(&args.elf)? {
+        machine.host_exit_addr = Some(tohost);
+        println!("Found tohost at 0x{:016x}", tohost);
+    }
+
     // sanity check
     println!("Loaded ELF entry point at 0x{:016x}", entry);
 
@@ -42,11 +49,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // handle halting conditions
         match machine.step() {
             Err(riscv_emu::cpu::CpuStepResult::Halt(reason)) => {
+                if args.trace {
+                    eprintln!(
+                        "Final state: gp(x3)=0x{:x} ({})",
+                        machine.cpu.regs[3], machine.cpu.regs[3]
+                    );
+                }
                 println!("CPU halted: {}", reason);
                 break;
             }
             Err(e) => {
                 eprintln!("CPU error: {}", e);
+                eprintln!(
+                    "At PC: 0x{:016x}, gp(x3)=0x{:x}",
+                    machine.cpu.pc, machine.cpu.regs[3]
+                );
                 break;
             }
             Ok(()) => {}

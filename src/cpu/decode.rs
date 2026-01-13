@@ -90,6 +90,8 @@ pub enum Instr {
     Csrrsi { rd: u8, csr: u16, uimm: u8 },
     Csrrci { rd: u8, csr: u16, uimm: u8 },
     Mret,
+    // Atomic/Memory instructions
+    Fence, // 0b0001111 - No-op for now
 }
 
 fn sign_extend(value: i64, bits: u32) -> i64 {
@@ -349,6 +351,8 @@ pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
                 _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
+        // Fence instruction (0b0001111)
+        0b0001111 => Ok(Instr::Fence),
         _ => Err(DecodeError::InvalidOpcode { inst }),
     }
 }
