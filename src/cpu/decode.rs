@@ -130,26 +130,27 @@ pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
             let funct3 = ((inst >> 12) & 0x7) as u8;
             let rs1 = ((inst >> 15) & 0x1f) as u8;
             let imm = sign_extend((inst >> 20) as i64, 12);
+            let shamt = ((inst >> 20) & 0x3f) as u8; // RV64I uses 6-bit shamt
+            let imm_top6 = ((inst >> 26) & 0x3f) as u8; // imm[11:6]
 
             match funct3 {
                 0x0 => Ok(Instr::Addi { rd, rs1, imm }),
                 0x4 => Ok(Instr::Xori { rd, rs1, imm }),
                 0x6 => Ok(Instr::Ori { rd, rs1, imm }),
                 0x7 => Ok(Instr::Andi { rd, rs1, imm }),
-                0x1 => Ok(Instr::Slli {
-                    rd,
-                    rs1,
-                    shamt: (imm & 0x3f) as u8,
-                }),
-                0x5 => {
-                    let shamt = (imm & 0x3f) as u8;
-                    let funct7 = ((imm >> 6) & 0x7f) as u8;
-                    match funct7 {
-                        0x00 => Ok(Instr::Srli { rd, rs1, shamt }),
-                        0x20 => Ok(Instr::Srai { rd, rs1, shamt }),
-                        _ => Err(DecodeError::InvalidOpcode { inst }),
+                0x1 => {
+                    // SLLI: imm[11:6] must be 0 for RV64I
+                    if imm_top6 == 0 {
+                        Ok(Instr::Slli { rd, rs1, shamt })
+                    } else {
+                        Err(DecodeError::InvalidOpcode { inst })
                     }
                 }
+                0x5 => match imm_top6 {
+                    0x00 => Ok(Instr::Srli { rd, rs1, shamt }),
+                    0x10 => Ok(Instr::Srai { rd, rs1, shamt }), // imm[11:6] == 0b010000 for SRAI
+                    _ => Err(DecodeError::InvalidOpcode { inst }),
+                },
                 0x2 => Ok(Instr::Slti { rd, rs1, imm }),
                 0x3 => Ok(Instr::Sltiu { rd, rs1, imm }),
                 _ => Err(DecodeError::InvalidOpcode { inst }),

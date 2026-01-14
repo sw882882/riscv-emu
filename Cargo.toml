@@ -3,6 +3,10 @@ name = "riscv-emu"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "riscv-emu"
+path = "src/main.rs"
+
 [dependencies]
 goblin = "0.8"
 clap = { version = "4", features = ["derive"] }

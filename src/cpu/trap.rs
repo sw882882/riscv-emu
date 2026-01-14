@@ -67,6 +67,34 @@ impl<T> WithPc<T> for Result<T, MemError> {
     }
 }
 
+/// Helper trait for load operations that converts MemError::Misaligned to LoadMisaligned
+pub trait WithPcLoad<T> {
+    fn with_pc_load(self, pc: u64) -> Result<T, Trap>;
+}
+
+impl<T> WithPcLoad<T> for Result<T, MemError> {
+    fn with_pc_load(self, pc: u64) -> Result<T, Trap> {
+        self.map_err(|err| match err {
+            MemError::Misaligned { addr, .. } => Trap::LoadMisaligned { pc, addr },
+            _ => Trap::Mem { pc, err },
+        })
+    }
+}
+
+/// Helper trait for store operations that converts MemError::Misaligned to StoreMisaligned
+pub trait WithPcStore<T> {
+    fn with_pc_store(self, pc: u64) -> Result<T, Trap>;
+}
+
+impl<T> WithPcStore<T> for Result<T, MemError> {
+    fn with_pc_store(self, pc: u64) -> Result<T, Trap> {
+        self.map_err(|err| match err {
+            MemError::Misaligned { addr, .. } => Trap::StoreMisaligned { pc, addr },
+            _ => Trap::Mem { pc, err },
+        })
+    }
+}
+
 impl<T> WithPc<T> for Result<T, crate::csr::CsrError> {
     fn with_pc(self, pc: u64) -> Result<T, Trap> {
         self.map_err(|_err| Trap::IllegalInstruction {
