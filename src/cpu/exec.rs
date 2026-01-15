@@ -1,6 +1,6 @@
 use super::IntoCpuResult;
 use super::decode::Instr;
-use super::trap::{Trap, WithPc, WithPcLoad, WithPcStore};
+use super::trap::{Trap, WithPc};
 use crate::cpu::{Cpu, CpuStepResult};
 use crate::mem::Memory;
 
@@ -61,44 +61,42 @@ pub fn execute(
         }
         Instr::LB { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc_load(pc).into_cpu_result()?;
+            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
             let value = sign_extend(byte as i64, 8) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LBU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc_load(pc).into_cpu_result()?;
+            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
             let value = byte as u64; // Zero-extend from 8 to 64 bits
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LH { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc_load(pc).into_cpu_result()?;
+            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
             let value = sign_extend(half as i64, 16) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LHU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc_load(pc).into_cpu_result()?;
+            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
             let value = half as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LD { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u64(addr).with_pc_load(pc).into_cpu_result()?;
+            let word = mem.read_u64(addr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, word);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SB { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = (r(cpu, rs2) & 0xff) as u8;
-            mem.write_u8(addr, byte)
-                .with_pc_store(pc)
-                .into_cpu_result()?;
+            mem.write_u8(addr, byte).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Xor { rd, rs1, rs2 } => {
@@ -199,7 +197,7 @@ pub fn execute(
         }
         Instr::LW { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc_load(pc).into_cpu_result()?;
+            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
             let value = sign_extend(word as i64, 32) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
@@ -207,9 +205,7 @@ pub fn execute(
         Instr::SH { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let half = (r(cpu, rs2) & 0xffff) as u16;
-            mem.write_u16(addr, half)
-                .with_pc_store(pc)
-                .into_cpu_result()?;
+            mem.write_u16(addr, half).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SW { rs1, rs2, off } => {
@@ -223,9 +219,7 @@ pub fn execute(
                     return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
                 }
             }
-            mem.write_u32(addr, word)
-                .with_pc_store(pc)
-                .into_cpu_result()?;
+            mem.write_u32(addr, word).with_pc(pc).into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Blt { rs1, rs2, off } => {
@@ -319,7 +313,7 @@ pub fn execute(
         }
         Instr::LWU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc_load(pc).into_cpu_result()?;
+            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
             let value = word as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
@@ -334,7 +328,7 @@ pub fn execute(
                 }
             }
             mem.write_u64(addr, r(cpu, rs2))
-                .with_pc_store(pc)
+                .with_pc(pc)
                 .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }

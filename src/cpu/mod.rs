@@ -142,7 +142,7 @@ impl Machine {
     }
 
     fn handle_trap(&mut self, trap: trap::Trap) -> Result<(), CpuStepResult> {
-        let fault_pc = self.cpu.pc;
+        let fault_pc = trap.pc();
 
         self.cpu
             .csr
