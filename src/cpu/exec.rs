@@ -3,14 +3,18 @@ use super::decode::Instr;
 use super::trap::{Trap, WithPc};
 use crate::cpu::{Cpu, CpuStepResult};
 use crate::mem::Memory;
+use crate::mmu::Mmu;
 
 pub fn execute(
     cpu: &mut Cpu,
     mem: &mut Memory,
+    mmu: &mut Mmu,
     instr: Instr,
     host_exit_addr: Option<u64>,
 ) -> Result<(), CpuStepResult> {
     let pc = cpu.pc;
+    let satp = cpu.csr.satp;
+    let priv_mode = cpu.csr.priv_mode;
 
     let r = |cpu: &Cpu, idx: u8| -> u64 { cpu.regs[idx as usize] };
     let w = |cpu: &mut Cpu, idx: u8, val: u64| {
@@ -61,42 +65,59 @@ pub fn execute(
         }
         Instr::LB { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
+            let byte = mem
+                .read_u8(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = sign_extend(byte as i64, 8) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LBU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let byte = mem.read_u8(addr).with_pc(pc).into_cpu_result()?;
+            let byte = mem
+                .read_u8(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = byte as u64; // Zero-extend from 8 to 64 bits
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LH { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
+            let half = mem
+                .read_u16(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = sign_extend(half as i64, 16) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LHU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let half = mem.read_u16(addr).with_pc(pc).into_cpu_result()?;
+            let half = mem
+                .read_u16(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = half as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::LD { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u64(addr).with_pc(pc).into_cpu_result()?;
+            let word = mem
+                .read_u64(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             w(cpu, rd, word);
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SB { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let byte = (r(cpu, rs2) & 0xff) as u8;
-            mem.write_u8(addr, byte).with_pc(pc).into_cpu_result()?;
+            mem.write_u8(addr, byte, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Xor { rd, rs1, rs2 } => {
@@ -197,7 +218,10 @@ pub fn execute(
         }
         Instr::LW { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
+            let word = mem
+                .read_u32(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = sign_extend(word as i64, 32) as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
@@ -205,7 +229,9 @@ pub fn execute(
         Instr::SH { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let half = (r(cpu, rs2) & 0xffff) as u16;
-            mem.write_u16(addr, half).with_pc(pc).into_cpu_result()?;
+            mem.write_u16(addr, half, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::SW { rs1, rs2, off } => {
@@ -219,7 +245,9 @@ pub fn execute(
                     return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
                 }
             }
-            mem.write_u32(addr, word).with_pc(pc).into_cpu_result()?;
+            mem.write_u32(addr, word, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Blt { rs1, rs2, off } => {
@@ -260,7 +288,13 @@ pub fn execute(
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Ecall => {
-            return Err(CpuStepResult::Trapped(Trap::Ecall { pc }));
+            use crate::csr::PrivMode;
+            let trap = match cpu.csr.priv_mode {
+                PrivMode::User => Trap::Ecall { pc },
+                PrivMode::Supervisor => Trap::EcallFromS { pc },
+                PrivMode::Machine => Trap::EcallFromM { pc },
+            };
+            return Err(CpuStepResult::Trapped(trap));
         }
         Instr::Ebreak => {
             return Err(CpuStepResult::Trapped(Trap::Breakpoint { pc }));
@@ -313,7 +347,10 @@ pub fn execute(
         }
         Instr::LWU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            let word = mem.read_u32(addr).with_pc(pc).into_cpu_result()?;
+            let word = mem
+                .read_u32(addr, satp, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
             let value = word as u64;
             w(cpu, rd, value);
             cpu.pc = pc.wrapping_add(4);
@@ -327,7 +364,7 @@ pub fn execute(
                     return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
                 }
             }
-            mem.write_u64(addr, r(cpu, rs2))
+            mem.write_u64(addr, r(cpu, rs2), satp, priv_mode, mmu)
                 .with_pc(pc)
                 .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
@@ -341,6 +378,10 @@ pub fn execute(
                 .write(csr, rs1_value)
                 .with_pc(pc)
                 .into_cpu_result()?;
+            // Flush TLB if writing to satp (0x180)
+            if csr == 0x180 {
+                mmu.flush_tlb(None);
+            }
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrs { rd, csr, rs1 } => {
@@ -374,6 +415,10 @@ pub fn execute(
                 .write(csr, uimm as u64)
                 .with_pc(pc)
                 .into_cpu_result()?;
+            // Flush TLB if writing to satp (0x180)
+            if csr == 0x180 {
+                mmu.flush_tlb(None);
+            }
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrsi { rd, csr, uimm } => {
@@ -399,8 +444,76 @@ pub fn execute(
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Mret => {
-            let mepc = cpu.csr.read(0x341).with_pc(pc).into_cpu_result()?; // mepc
+            use crate::csr::PrivMode;
+
+            // MRET is only valid in M-mode
+            if cpu.csr.priv_mode != PrivMode::Machine {
+                return Err(CpuStepResult::Trapped(Trap::IllegalInstruction {
+                    pc,
+                    inst: 0x30200073, // MRET opcode
+                }));
+            }
+
+            let mepc = cpu.csr.read(0x341).with_pc(pc).into_cpu_result()?;
+
+            // Restore privilege mode from MPP
+            let mpp = cpu.csr.mpp();
+            cpu.csr.priv_mode = mpp;
+
+            // Set MPP to User mode
+            cpu.csr.set_mpp(PrivMode::User);
+
+            // Restore MIE from MPIE
+            let mpie = (cpu.csr.mstatus >> 7) & 1;
+            cpu.csr.mstatus = (cpu.csr.mstatus & !(1 << 3)) | (mpie << 3);
+
+            // Set MPIE to 1
+            cpu.csr.mstatus |= 1 << 7;
+
             cpu.pc = mepc;
+        }
+        Instr::Sret => {
+            use crate::csr::PrivMode;
+
+            // SRET is only valid in S-mode or higher
+            if cpu.csr.priv_mode == PrivMode::User {
+                return Err(CpuStepResult::Trapped(Trap::IllegalInstruction {
+                    pc,
+                    inst: 0x10200073, // SRET opcode
+                }));
+            }
+
+            let sepc = cpu.csr.read(0x141).with_pc(pc).into_cpu_result()?;
+
+            // Restore privilege mode from SPP
+            let spp = cpu.csr.spp();
+            cpu.csr.priv_mode = spp;
+
+            // Set SPP to User mode
+            cpu.csr.set_spp(PrivMode::User);
+
+            // Restore SIE from SPIE
+            let spie = (cpu.csr.mstatus >> 5) & 1;
+            cpu.csr.mstatus = (cpu.csr.mstatus & !(1 << 1)) | (spie << 1);
+
+            // Set SPIE to 1
+            cpu.csr.mstatus |= 1 << 5;
+
+            cpu.pc = sepc;
+        }
+        Instr::Sfence => {
+            // SFENCE.VMA - decode and flush TLB
+            // For now, we flush all entries since we don't have the rs1/rs2 available here
+            // In a full implementation, we'd check if rs1==0 && rs2==0 for full flush
+            // or use rs1 as VPN for selective flush
+            mmu.flush_tlb(None);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Wfi => {
+            // WFI - wait for interrupt
+            // For now, just treat as no-op
+            // In future, could pause execution until interrupt pending
+            cpu.pc = pc.wrapping_add(4);
         }
         Instr::Fence => {
             // Memory fence - for in-order execution, this is a no-op

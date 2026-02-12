@@ -63,14 +63,14 @@ pub fn load_elf_into_memory(
         }
 
         let seg = &bytes[file_off..file_off + file_sz];
-        mem.write_bytes(vaddr, seg)
+        mem.write_bytes_phys(vaddr, seg)
             .map_err(|e: MemError| format!("mem write failed: {e}"))?;
 
         // Zero-fill bss (p_memsz may be larger than p_filesz)
         let mem_sz = ph.p_memsz as usize;
         if mem_sz > file_sz {
             let zeros = vec![0u8; mem_sz - file_sz];
-            mem.write_bytes(vaddr + file_sz as u64, &zeros)
+            mem.write_bytes_phys(vaddr + file_sz as u64, &zeros)
                 .map_err(|e: MemError| format!("bss write failed: {e}"))?;
         }
     }

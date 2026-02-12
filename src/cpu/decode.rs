@@ -90,6 +90,9 @@ pub enum Instr {
     Csrrsi { rd: u8, csr: u16, uimm: u8 },
     Csrrci { rd: u8, csr: u16, uimm: u8 },
     Mret,
+    Sret,
+    Sfence,
+    Wfi,
     // Atomic/Memory instructions
     Fence, // 0b0001111 - No-op for now
 }
@@ -266,8 +269,18 @@ pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
                     match imm {
                         0x000 => Ok(Instr::Ecall),
                         0x001 => Ok(Instr::Ebreak),
+                        0x102 => Ok(Instr::Sret),
                         0x302 => Ok(Instr::Mret),
-                        _ => Err(DecodeError::InvalidOpcode { inst }),
+                        0x105 => Ok(Instr::Wfi),
+                        _ => {
+                            // Check for SFENCE.VMA
+                            let funct7 = (inst >> 25) & 0x7f;
+                            if funct7 == 0x9 {
+                                Ok(Instr::Sfence)
+                            } else {
+                                Err(DecodeError::InvalidOpcode { inst })
+                            }
+                        }
                     }
                 }
                 0x1 => {
