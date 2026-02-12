@@ -25,16 +25,16 @@ pub struct Machine {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HaltReason {
-    HostExit { gp: u64 },
+    HostExit { code: u64, gp: u64 },
     MaxInsns,
 }
 
 impl std::fmt::Display for HaltReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HaltReason::HostExit { gp } => {
-                let status = if *gp == 1 { "PASS" } else { "FAIL" };
-                write!(f, "host exit [{}] (gp={})", status, gp)
+            HaltReason::HostExit { code, gp } => {
+                let status = if *code == 1 { "PASS" } else { "FAIL" };
+                write!(f, "host exit [{}] (code={}, gp={})", status, code, gp)
             }
             HaltReason::MaxInsns => write!(f, "maximum instructions executed"),
         }
@@ -105,16 +105,16 @@ impl Machine {
                 7 => Trap::MachineTimerInterrupt { pc },
                 9 => Trap::SupervisorExternalInterrupt { pc },
                 11 => Trap::MachineExternalInterrupt { pc },
-                _ => return Ok(()), // Unknown interrupt, ignore
+                _ => return self.finish_step(), // Unknown interrupt, ignore
             };
             self.handle_trap(trap)?;
-            return Ok(());
+            return self.finish_step();
         }
 
         // Fetch
         let inst = match self
             .mem
-            .read_u32(
+            .read_u32_exec(
                 self.cpu.pc,
                 self.cpu.csr.satp,
                 self.cpu.csr.priv_mode,
@@ -126,7 +126,7 @@ impl Machine {
             Ok(i) => i,
             Err(CpuStepResult::Trapped(trap)) => {
                 self.handle_trap(trap)?;
-                return Ok(());
+                return self.finish_step();
             }
             Err(e) => return Err(e),
         };
@@ -139,7 +139,7 @@ impl Machine {
             Ok(d) => d,
             Err(CpuStepResult::Trapped(trap)) => {
                 self.handle_trap(trap)?;
-                return Ok(());
+                return self.finish_step();
             }
             Err(e) => return Err(e),
         };
@@ -160,10 +160,15 @@ impl Machine {
             }
             Err(CpuStepResult::Trapped(trap)) => {
                 self.handle_trap(trap)?;
+                return self.finish_step();
             }
             Err(e) => return Err(e),
         }
 
+        self.finish_step()
+    }
+
+    fn finish_step(&mut self) -> Result<(), CpuStepResult> {
         // Increment instruction counter and check max_insns
         self.executed += 1;
         if self.max_insns != 0 && self.executed >= self.max_insns {
@@ -191,18 +196,11 @@ impl Machine {
             self.cpu.csr.should_delegate_exception(cause)
         };
 
-        let (tvec_csr, epc_csr, cause_csr, tval_csr, target_mode) = if delegate_to_s {
-            (0x105, 0x141, 0x142, 0x143, PrivMode::Supervisor)
+        let target_mode = if delegate_to_s {
+            PrivMode::Supervisor
         } else {
-            (0x305, 0x341, 0x342, 0x343, PrivMode::Machine)
+            PrivMode::Machine
         };
-
-        // Save current PC to xepc
-        self.cpu
-            .csr
-            .write(epc_csr, fault_pc)
-            .with_pc(fault_pc)
-            .into_cpu_result()?;
 
         // Set cause (with interrupt bit if applicable)
         let cause_val = if is_interrupt {
@@ -210,18 +208,20 @@ impl Machine {
         } else {
             cause
         };
-        self.cpu
-            .csr
-            .write(cause_csr, cause_val)
-            .with_pc(fault_pc)
-            .into_cpu_result()?;
 
-        // Set trap value
-        self.cpu
-            .csr
-            .write(tval_csr, tval)
-            .with_pc(fault_pc)
-            .into_cpu_result()?;
+        // Trap entry writes are architectural side-effects and must bypass CSR
+        // privilege checks based on the pre-trap mode.
+        let tvec = if target_mode == PrivMode::Supervisor {
+            self.cpu.csr.sepc = fault_pc & !0b1;
+            self.cpu.csr.scause = cause_val;
+            self.cpu.csr.stval = tval;
+            self.cpu.csr.stvec
+        } else {
+            self.cpu.csr.mepc = fault_pc & !0b1;
+            self.cpu.csr.mcause = cause_val;
+            self.cpu.csr.mtval = tval;
+            self.cpu.csr.mtvec
+        };
 
         // Update mstatus/sstatus privilege stack
         let current_mode = self.cpu.csr.priv_mode;
@@ -248,7 +248,6 @@ impl Machine {
         self.cpu.csr.priv_mode = target_mode;
 
         // Jump to trap vector
-        let tvec = self.cpu.csr.read(tvec_csr).unwrap_or(0);
         let mode = tvec & 0b11;
         let base = tvec & !0b11;
 
@@ -271,5 +270,28 @@ impl Machine {
         };
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CpuStepResult, HaltReason, Machine};
+
+    #[test]
+    fn test_step_trap_path_counts_toward_max_insns() {
+        let mut m = Machine::new(0x10000);
+        // Force an immediate fetch trap: PC is outside mapped RAM base (0x8000_0000+).
+        m.cpu.pc = 0x0;
+        // Ensure trap entry is considered configured so trap handling succeeds.
+        m.cpu.csr.mtvec = 0x8000_0100;
+        m.max_insns = 1;
+
+        match m.step() {
+            Err(CpuStepResult::Halt(HaltReason::MaxInsns)) => {}
+            other => panic!("expected MaxInsns halt, got {:?}", other),
+        }
+
+        assert_eq!(m.executed, 1, "trap-handled step should increment executed");
+        assert_eq!(m.cpu.pc, 0x8000_0100, "trap should vector to mtvec base");
     }
 }

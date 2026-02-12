@@ -4,6 +4,12 @@ use thiserror::Error;
 pub enum MemError {
     #[error("address out of range: 0x{0:x}")]
     Oob(u64),
+    #[error("instruction page fault at address: 0x{0:x}")]
+    InstructionPageFault(u64),
+    #[error("load page fault at address: 0x{0:x}")]
+    LoadPageFault(u64),
+    #[error("store page fault at address: 0x{0:x}")]
+    StorePageFault(u64),
 }
 
 pub struct Memory {
@@ -32,13 +38,16 @@ impl Memory {
         mmu: &mut crate::mmu::Mmu,
     ) -> Result<u64, MemError> {
         mmu.translate(vaddr, satp, is_fetch, is_write, priv_mode, self)
-            .map_err(|_| MemError::Oob(vaddr))
-    }
-
-    /// Legacy translate_addr for backward compatibility (identity mapping only)
-    fn translate_addr_bare(&self, vaddr: u64, _is_write: bool) -> Result<u64, MemError> {
-        // Identity mapping: virtual == physical
-        Ok(vaddr)
+            .map_err(|trap| match trap {
+                crate::cpu::trap::Trap::InstructionPageFault { addr, .. } => {
+                    MemError::InstructionPageFault(addr)
+                }
+                crate::cpu::trap::Trap::LoadPageFault { addr, .. } => MemError::LoadPageFault(addr),
+                crate::cpu::trap::Trap::StorePageFault { addr, .. } => {
+                    MemError::StorePageFault(addr)
+                }
+                _ => MemError::Oob(vaddr),
+            })
     }
 
     fn check_oob(&self, addr: u64, size: u64) -> Result<usize, MemError> {
@@ -113,6 +122,19 @@ impl Memory {
         mmu: &mut crate::mmu::Mmu,
     ) -> Result<u32, MemError> {
         let paddr = self.translate_addr(vaddr, satp, false, false, priv_mode, mmu)?;
+        self.read_u32_phys(paddr)
+    }
+
+    /// Instruction fetch path: translation must enforce execute permission (X bit),
+    /// not data load permission (R bit).
+    pub fn read_u32_exec(
+        &mut self,
+        vaddr: u64,
+        satp: u64,
+        priv_mode: crate::csr::PrivMode,
+        mmu: &mut crate::mmu::Mmu,
+    ) -> Result<u32, MemError> {
+        let paddr = self.translate_addr(vaddr, satp, true, false, priv_mode, mmu)?;
         self.read_u32_phys(paddr)
     }
 
@@ -212,11 +234,7 @@ impl Memory {
         Ok(())
     }
 
-    pub fn write_bytes_phys(
-        &mut self,
-        paddr: u64,
-        bytes: &[u8],
-    ) -> Result<(), MemError> {
+    pub fn write_bytes_phys(&mut self, paddr: u64, bytes: &[u8]) -> Result<(), MemError> {
         // Direct physical write (for ELF loading and boot)
         let off = self.check_oob(paddr, bytes.len() as u64)?;
         self.data[off..off + bytes.len()].copy_from_slice(bytes);

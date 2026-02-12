@@ -317,13 +317,15 @@ impl CsrFile {
 
             // Supervisor address translation
             0x180 => {
-                // For now, only accept bare mode (satp.mode = 0)
+                // Accept mode 0 (bare) or mode 8 (Sv39)
                 let mode = value >> 60;
-                if mode == 0 {
-                    self.satp = value;
+                match mode {
+                    0 | 8 => {
+                        self.satp = value;
+                        Ok(())
+                    }
+                    _ => Err(CsrError::UnsupportedWrite(csr)),
                 }
-                // Silently ignore writes with non-zero mode until Sv39 is implemented
-                Ok(())
             }
 
             // Machine trap setup
@@ -464,5 +466,44 @@ impl CsrFile {
         } else {
             self.mip &= !(1 << 5); // STIP
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_satp_mode_validation() {
+        let mut csr = CsrFile::new();
+
+        // Test 1: Mode 0 (bare) should be accepted
+        let result = csr.write(0x180, 0x0u64);
+        assert!(result.is_ok(), "Mode 0 (bare) should be valid");
+        assert_eq!(csr.satp, 0x0, "satp should be updated to 0");
+        println!("✓ satp mode 0 (bare) accepted");
+
+        // Test 2: Mode 8 (Sv39) should be accepted
+        let satp_sv39 = (8u64 << 60) | 0x1234;
+        let result = csr.write(0x180, satp_sv39);
+        assert!(result.is_ok(), "Mode 8 (Sv39) should be valid");
+        assert_eq!(csr.satp, satp_sv39, "satp should be updated with mode 8");
+        println!("✓ satp mode 8 (Sv39) accepted");
+
+        // Test 3: Mode 9 (invalid) should be rejected
+        let satp_invalid = (9u64 << 60) | 0x5678;
+        let result = csr.write(0x180, satp_invalid);
+        assert!(result.is_err(), "Mode 9 should be invalid");
+        assert_eq!(csr.satp, satp_sv39, "satp should NOT be updated");
+        println!("✓ satp mode 9 (invalid) rejected");
+
+        // Test 4: Mode 1 (invalid) should be rejected
+        let satp_invalid2 = (1u64 << 60) | 0xabcd;
+        let result = csr.write(0x180, satp_invalid2);
+        assert!(result.is_err(), "Mode 1 should be invalid");
+        assert_eq!(csr.satp, satp_sv39, "satp should NOT be updated");
+        println!("✓ satp mode 1 (invalid) rejected");
+
+        println!("✅ satp mode validation tests passed");
     }
 }

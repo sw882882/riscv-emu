@@ -178,7 +178,12 @@ pub trait WithPc<T> {
 
 impl<T> WithPc<T> for Result<T, MemError> {
     fn with_pc(self, pc: u64) -> Result<T, Trap> {
-        self.map_err(|err| Trap::Mem { pc, err })
+        self.map_err(|err| match err {
+            MemError::InstructionPageFault(addr) => Trap::InstructionPageFault { pc, addr },
+            MemError::LoadPageFault(addr) => Trap::LoadPageFault { pc, addr },
+            MemError::StorePageFault(addr) => Trap::StorePageFault { pc, addr },
+            _ => Trap::Mem { pc, err },
+        })
     }
 }
 

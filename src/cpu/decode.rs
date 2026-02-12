@@ -29,6 +29,15 @@ pub enum Instr {
     Sra { rd: u8, rs1: u8, rs2: u8 },
     Slt { rd: u8, rs1: u8, rs2: u8 },
     Sltu { rd: u8, rs1: u8, rs2: u8 },
+    // M extension (0b0110011 with funct7=0b0000001)
+    Mul { rd: u8, rs1: u8, rs2: u8 },
+    Mulh { rd: u8, rs1: u8, rs2: u8 },
+    Mulhsu { rd: u8, rs1: u8, rs2: u8 },
+    Mulhu { rd: u8, rs1: u8, rs2: u8 },
+    Div { rd: u8, rs1: u8, rs2: u8 },
+    Divu { rd: u8, rs1: u8, rs2: u8 },
+    Rem { rd: u8, rs1: u8, rs2: u8 },
+    Remu { rd: u8, rs1: u8, rs2: u8 },
     // I-type arithmetic (0b0010011)
     Addi { rd: u8, rs1: u8, imm: i64 },
     Xori { rd: u8, rs1: u8, imm: i64 },
@@ -78,6 +87,12 @@ pub enum Instr {
     Sllw { rd: u8, rs1: u8, rs2: u8 },
     Srlw { rd: u8, rs1: u8, rs2: u8 },
     Sraw { rd: u8, rs1: u8, rs2: u8 },
+    // M extension (0b0111011 with funct7=0b0000001)
+    Mulw { rd: u8, rs1: u8, rs2: u8 },
+    Divw { rd: u8, rs1: u8, rs2: u8 },
+    Divuw { rd: u8, rs1: u8, rs2: u8 },
+    Remw { rd: u8, rs1: u8, rs2: u8 },
+    Remuw { rd: u8, rs1: u8, rs2: u8 },
     LWU { rd: u8, rs1: u8, off: i64 },
     LD { rd: u8, rs1: u8, off: i64 },
     SD { rs1: u8, rs2: u8, off: i64 },
@@ -124,6 +139,14 @@ pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
                 (0x5, 0x20) => Ok(Instr::Sra { rd, rs1, rs2 }),
                 (0x2, 0x00) => Ok(Instr::Slt { rd, rs1, rs2 }),
                 (0x3, 0x00) => Ok(Instr::Sltu { rd, rs1, rs2 }),
+                (0x0, 0x01) => Ok(Instr::Mul { rd, rs1, rs2 }),
+                (0x1, 0x01) => Ok(Instr::Mulh { rd, rs1, rs2 }),
+                (0x2, 0x01) => Ok(Instr::Mulhsu { rd, rs1, rs2 }),
+                (0x3, 0x01) => Ok(Instr::Mulhu { rd, rs1, rs2 }),
+                (0x4, 0x01) => Ok(Instr::Div { rd, rs1, rs2 }),
+                (0x5, 0x01) => Ok(Instr::Divu { rd, rs1, rs2 }),
+                (0x6, 0x01) => Ok(Instr::Rem { rd, rs1, rs2 }),
+                (0x7, 0x01) => Ok(Instr::Remu { rd, rs1, rs2 }),
                 _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }
@@ -362,6 +385,11 @@ pub fn decode(_pc: u64, inst: u32) -> Result<Instr, DecodeError> {
                 (0x1, 0x00) => Ok(Instr::Sllw { rd, rs1, rs2 }),
                 (0x5, 0x00) => Ok(Instr::Srlw { rd, rs1, rs2 }),
                 (0x5, 0x20) => Ok(Instr::Sraw { rd, rs1, rs2 }),
+                (0x0, 0x01) => Ok(Instr::Mulw { rd, rs1, rs2 }),
+                (0x4, 0x01) => Ok(Instr::Divw { rd, rs1, rs2 }),
+                (0x5, 0x01) => Ok(Instr::Divuw { rd, rs1, rs2 }),
+                (0x6, 0x01) => Ok(Instr::Remw { rd, rs1, rs2 }),
+                (0x7, 0x01) => Ok(Instr::Remuw { rd, rs1, rs2 }),
                 _ => Err(DecodeError::InvalidOpcode { inst }),
             }
         }

@@ -172,6 +172,79 @@ pub fn execute(
             w(cpu, rd, if r(cpu, rs1) < r(cpu, rs2) { 1 } else { 0 });
             cpu.pc = pc.wrapping_add(4);
         }
+        Instr::Mul { rd, rs1, rs2 } => {
+            w(cpu, rd, r(cpu, rs1).wrapping_mul(r(cpu, rs2)));
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Mulh { rd, rs1, rs2 } => {
+            let lhs = r(cpu, rs1) as i64 as i128;
+            let rhs = r(cpu, rs2) as i64 as i128;
+            let hi = (lhs.wrapping_mul(rhs) >> 64) as i64 as u64;
+            w(cpu, rd, hi);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Mulhsu { rd, rs1, rs2 } => {
+            let lhs = r(cpu, rs1) as i64 as i128;
+            let rhs = r(cpu, rs2) as i128;
+            let hi = (lhs.wrapping_mul(rhs) >> 64) as i64 as u64;
+            w(cpu, rd, hi);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Mulhu { rd, rs1, rs2 } => {
+            let lhs = r(cpu, rs1) as u128;
+            let rhs = r(cpu, rs2) as u128;
+            let hi = (lhs.wrapping_mul(rhs) >> 64) as u64;
+            w(cpu, rd, hi);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Div { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as i64;
+            let divisor = r(cpu, rs2) as i64;
+            let result = if divisor == 0 {
+                -1i64
+            } else if dividend == i64::MIN && divisor == -1 {
+                i64::MIN
+            } else {
+                dividend.wrapping_div(divisor)
+            };
+            w(cpu, rd, result as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Divu { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1);
+            let divisor = r(cpu, rs2);
+            let result = if divisor == 0 {
+                u64::MAX
+            } else {
+                dividend.wrapping_div(divisor)
+            };
+            w(cpu, rd, result);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Rem { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as i64;
+            let divisor = r(cpu, rs2) as i64;
+            let result = if divisor == 0 {
+                dividend
+            } else if dividend == i64::MIN && divisor == -1 {
+                0
+            } else {
+                dividend.wrapping_rem(divisor)
+            };
+            w(cpu, rd, result as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Remu { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1);
+            let divisor = r(cpu, rs2);
+            let result = if divisor == 0 {
+                dividend
+            } else {
+                dividend.wrapping_rem(divisor)
+            };
+            w(cpu, rd, result);
+            cpu.pc = pc.wrapping_add(4);
+        }
         Instr::Xori { rd, rs1, imm } => {
             w(cpu, rd, r(cpu, rs1) ^ (imm as u64));
             cpu.pc = pc.wrapping_add(4);
@@ -237,15 +310,37 @@ pub fn execute(
         Instr::SW { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = (r(cpu, rs2) & 0xffff_ffff) as u32;
-            // host exit address check
-            // TODO: temp for riscv-tests
+            let paddr = mem
+                .translate_addr(addr, satp, false, true, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
+
+            // Handle HTIF-like tohost writes using physical address so it works
+            // for both direct and virtual mappings.
             if let Some(exit_addr) = host_exit_addr {
-                if addr == exit_addr {
-                    let gp = r(cpu, 3); // x3 is gp (global pointer)
-                    return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
+                if paddr == exit_addr {
+                    let value = word as u64;
+                    let device = (value >> 56) & 0xff;
+                    let cmd = (value >> 48) & 0xff;
+                    if device == 0 && cmd == 0 && value != 0 {
+                        let gp = r(cpu, 3); // x3 is gp (global pointer)
+                        return Err(CpuStepResult::Halt(super::HaltReason::HostExit {
+                            code: value,
+                            gp,
+                        }));
+                    }
+
+                    // Non-exit host packet: consume immediately so guest polling
+                    // loops on tohost can make progress.
+                    mem.write_u64_phys(paddr, 0)
+                        .with_pc(pc)
+                        .into_cpu_result()?;
+                    cpu.pc = pc.wrapping_add(4);
+                    return Ok(());
                 }
             }
-            mem.write_u32(addr, word, satp, priv_mode, mmu)
+
+            mem.write_u32_phys(paddr, word)
                 .with_pc(pc)
                 .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
@@ -345,6 +440,59 @@ pub fn execute(
             w(cpu, rd, sign_extend(result as i64, 32) as u64);
             cpu.pc = pc.wrapping_add(4);
         }
+        Instr::Mulw { rd, rs1, rs2 } => {
+            let result = (r(cpu, rs1) as u32).wrapping_mul(r(cpu, rs2) as u32);
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Divw { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as i32;
+            let divisor = r(cpu, rs2) as i32;
+            let result = if divisor == 0 {
+                -1i32
+            } else if dividend == i32::MIN && divisor == -1 {
+                i32::MIN
+            } else {
+                dividend.wrapping_div(divisor)
+            };
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Divuw { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as u32;
+            let divisor = r(cpu, rs2) as u32;
+            let result = if divisor == 0 {
+                u32::MAX
+            } else {
+                dividend.wrapping_div(divisor)
+            };
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Remw { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as i32;
+            let divisor = r(cpu, rs2) as i32;
+            let result = if divisor == 0 {
+                dividend
+            } else if dividend == i32::MIN && divisor == -1 {
+                0
+            } else {
+                dividend.wrapping_rem(divisor)
+            };
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
+        Instr::Remuw { rd, rs1, rs2 } => {
+            let dividend = r(cpu, rs1) as u32;
+            let divisor = r(cpu, rs2) as u32;
+            let result = if divisor == 0 {
+                dividend
+            } else {
+                dividend.wrapping_rem(divisor)
+            };
+            w(cpu, rd, sign_extend(result as i64, 32) as u64);
+            cpu.pc = pc.wrapping_add(4);
+        }
         Instr::LWU { rd, rs1, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
             let word = mem
@@ -357,23 +505,43 @@ pub fn execute(
         }
         Instr::SD { rs1, rs2, off } => {
             let addr = r(cpu, rs1).wrapping_add(off as u64);
-            // host exit address check
+            let value = r(cpu, rs2);
+            let paddr = mem
+                .translate_addr(addr, satp, false, true, priv_mode, mmu)
+                .with_pc(pc)
+                .into_cpu_result()?;
+
             if let Some(exit_addr) = host_exit_addr {
-                if addr == exit_addr {
-                    let gp = r(cpu, 3); // x3 is gp (global pointer)
-                    return Err(CpuStepResult::Halt(super::HaltReason::HostExit { gp }));
+                if paddr == exit_addr {
+                    let device = (value >> 56) & 0xff;
+                    let cmd = (value >> 48) & 0xff;
+                    if device == 0 && cmd == 0 && value != 0 {
+                        let gp = r(cpu, 3); // x3 is gp (global pointer)
+                        return Err(CpuStepResult::Halt(super::HaltReason::HostExit {
+                            code: value,
+                            gp,
+                        }));
+                    }
+
+                    mem.write_u64_phys(paddr, 0)
+                        .with_pc(pc)
+                        .into_cpu_result()?;
+                    cpu.pc = pc.wrapping_add(4);
+                    return Ok(());
                 }
             }
-            mem.write_u64(addr, r(cpu, rs2), satp, priv_mode, mmu)
+
+            mem.write_u64_phys(paddr, value)
                 .with_pc(pc)
                 .into_cpu_result()?;
             cpu.pc = pc.wrapping_add(4);
         }
         // TODO: atomicity later
         Instr::Csrrw { rd, csr, rs1 } => {
+            // CSR ops use the original x[rs1] value even when rd == rs1.
+            let rs1_value = r(cpu, rs1);
             let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
-            let rs1_value = r(cpu, rs1);
             cpu.csr
                 .write(csr, rs1_value)
                 .with_pc(pc)
@@ -385,9 +553,9 @@ pub fn execute(
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrs { rd, csr, rs1 } => {
+            let rs1_value = r(cpu, rs1);
             let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
-            let rs1_value = r(cpu, rs1);
             if rs1 != 0 {
                 cpu.csr
                     .set_bits(csr, rs1_value)
@@ -397,9 +565,9 @@ pub fn execute(
             cpu.pc = pc.wrapping_add(4);
         }
         Instr::Csrrc { rd, csr, rs1 } => {
+            let rs1_value = r(cpu, rs1);
             let csr_value = cpu.csr.read(csr).with_pc(pc).into_cpu_result()?;
             w(cpu, rd, csr_value);
-            let rs1_value = r(cpu, rs1);
             if rs1 != 0 {
                 cpu.csr
                     .clear_bits(csr, rs1_value)
@@ -525,4 +693,147 @@ pub fn execute(
     // Keep x0 pinned (extra safety)
     cpu.regs[0] = 0;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::{Cpu, HaltReason};
+    use crate::cpu::decode::Instr;
+    use crate::csr::PrivMode;
+
+    #[test]
+    fn test_csrrw_rd_eq_rs1_uses_original_rs1_value() {
+        let mut cpu = Cpu::default();
+        let mut mem = Memory::new(0x10000);
+        let mut mmu = Mmu::new();
+
+        cpu.pc = 0x8000_0000;
+        cpu.regs[2] = 0x1234; // sp
+        cpu.csr.sscratch = 0xabcd;
+        cpu.csr.priv_mode = PrivMode::Supervisor;
+
+        let r = execute(
+            &mut cpu,
+            &mut mem,
+            &mut mmu,
+            Instr::Csrrw {
+                rd: 2,
+                csr: 0x140, // sscratch
+                rs1: 2,
+            },
+            None,
+        );
+
+        assert!(r.is_ok(), "csrrw should execute successfully");
+        assert_eq!(cpu.regs[2], 0xabcd, "rd should receive previous CSR value");
+        assert_eq!(
+            cpu.csr.sscratch, 0x1234,
+            "CSR should be written with original rs1 value"
+        );
+    }
+
+    #[test]
+    fn test_csrrs_rd_eq_rs1_uses_original_rs1_value() {
+        let mut cpu = Cpu::default();
+        let mut mem = Memory::new(0x10000);
+        let mut mmu = Mmu::new();
+
+        cpu.pc = 0x8000_0000;
+        cpu.regs[5] = 0x1; // bitmask
+        cpu.csr.mie = 0x10;
+        cpu.csr.priv_mode = PrivMode::Machine;
+
+        let r = execute(
+            &mut cpu,
+            &mut mem,
+            &mut mmu,
+            Instr::Csrrs {
+                rd: 5,
+                csr: 0x304, // mie
+                rs1: 5,
+            },
+            None,
+        );
+
+        assert!(r.is_ok(), "csrrs should execute successfully");
+        assert_eq!(cpu.regs[5], 0x10, "rd should receive previous CSR value");
+        assert_eq!(
+            cpu.csr.mie, 0x11,
+            "CSR should OR with original rs1 bitmask"
+        );
+    }
+
+    #[test]
+    fn test_csrrc_rd_eq_rs1_uses_original_rs1_value() {
+        let mut cpu = Cpu::default();
+        let mut mem = Memory::new(0x10000);
+        let mut mmu = Mmu::new();
+
+        cpu.pc = 0x8000_0000;
+        cpu.regs[6] = 0x1; // clear bit 0 only
+        cpu.csr.mie = 0x11;
+        cpu.csr.priv_mode = PrivMode::Machine;
+
+        let r = execute(
+            &mut cpu,
+            &mut mem,
+            &mut mmu,
+            Instr::Csrrc {
+                rd: 6,
+                csr: 0x304, // mie
+                rs1: 6,
+            },
+            None,
+        );
+
+        assert!(r.is_ok(), "csrrc should execute successfully");
+        assert_eq!(cpu.regs[6], 0x11, "rd should receive previous CSR value");
+        assert_eq!(
+            cpu.csr.mie, 0x10,
+            "CSR should clear using original rs1 bitmask"
+        );
+    }
+
+    #[test]
+    fn test_tohost_exit_uses_physical_address_after_translation() {
+        let mut cpu = Cpu::default();
+        let mut mem = Memory::new(0x40000);
+        let mut mmu = Mmu::new();
+
+        // Build a simple Sv39 superpage mapping:
+        // VA 0x0.. maps to PA 0x8000_0000.. via root leaf PTE at index 0.
+        let root_pt_addr = 0x8000_2000u64;
+        let root_ppn = root_pt_addr >> 12;
+        let satp = (8u64 << 60) | root_ppn;
+        let root_leaf_pte = (0x80000u64 << 10) | 0x07u64; // V|R|W
+        mem.write_u64_phys(root_pt_addr, root_leaf_pte)
+            .expect("failed to set root PTE");
+
+        cpu.pc = 0x8000_0000;
+        cpu.csr.priv_mode = PrivMode::Supervisor;
+        cpu.csr.satp = satp;
+        cpu.regs[1] = 0x1000; // rs1: VA that translates to PA 0x8000_1000
+        cpu.regs[2] = 1; // rs2: host exit packet value
+
+        let result = execute(
+            &mut cpu,
+            &mut mem,
+            &mut mmu,
+            Instr::SW {
+                rs1: 1,
+                rs2: 2,
+                off: 0,
+            },
+            Some(0x8000_1000),
+        );
+
+        match result {
+            Err(CpuStepResult::Halt(HaltReason::HostExit { code, gp })) => {
+                assert_eq!(code, 1);
+                assert_eq!(gp, 0);
+            }
+            other => panic!("expected host exit halt, got: {:?}", other),
+        }
+    }
 }

@@ -2,13 +2,24 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+enum TestResult {
+    Pass,
+    Fail(String),
+    Skipped(String),
+}
+
 /// run a single rv64ui test binary and verify it passes
-fn run_test_binary(test_path: &str) -> Result<(), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_riscv-emu"))
+fn run_test_binary(test_path: &str) -> TestResult {
+    let output = match Command::new(env!("CARGO_BIN_EXE_riscv-emu"))
         .arg("--elf")
         .arg(test_path)
+        .arg("--max-insns")
+        .arg("100000") // 100K instructions per test
         .output()
-        .map_err(|e| format!("Failed to run test: {}", e))?;
+    {
+        Ok(out) => out,
+        Err(e) => return TestResult::Fail(format!("Failed to run test: {}", e)),
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -18,21 +29,23 @@ fn run_test_binary(test_path: &str) -> Result<(), String> {
     if combined.contains("[PASS]")
         || combined.contains("CPU halted") && !combined.contains("[FAIL]")
     {
-        Ok(())
+        TestResult::Pass
     } else if combined.contains("[FAIL]") {
-        Err(combined
-            .lines()
-            .find(|l| l.contains("[FAIL]"))
-            .unwrap_or("Test failed")
-            .to_string())
+        TestResult::Fail(
+            combined
+                .lines()
+                .find(|l| l.contains("[FAIL]"))
+                .unwrap_or("Test failed")
+                .to_string(),
+        )
     } else if !output.status.success() {
-        Err(format!(
+        TestResult::Fail(format!(
             "exited with code: {}",
             output.status.code().unwrap_or(-1)
         ))
     } else {
         // Assume success if status is 0 and no [FAIL] marker
-        Ok(())
+        TestResult::Pass
     }
 }
 
@@ -80,15 +93,23 @@ fn run_all_rv64ui_tests() {
 
     let mut failed_tests = Vec::new();
     let mut passed_tests = 0;
+    let mut skipped_tests = 0;
 
     for test_path in test_binaries {
         let test_name = test_path.file_name().unwrap().to_string_lossy().to_string();
+        eprint!("Running {}... ", test_name);
 
         match run_test_binary(test_path.to_str().unwrap()) {
-            Ok(()) => {
+            TestResult::Pass => {
+                eprintln!("✓");
                 passed_tests += 1;
             }
-            Err(e) => {
+            TestResult::Skipped(reason) => {
+                eprintln!("⊘ ({})", reason);
+                skipped_tests += 1;
+            }
+            TestResult::Fail(e) => {
+                eprintln!("✗ ({})", e);
                 failed_tests.push((test_name, e));
             }
         }
@@ -96,9 +117,11 @@ fn run_all_rv64ui_tests() {
 
     if !failed_tests.is_empty() {
         println!(
-            "\n{} / {} tests passed\n",
+            "\n{} passed, {} skipped, {} failed / {} total\n",
             passed_tests,
-            passed_tests + failed_tests.len()
+            skipped_tests,
+            failed_tests.len(),
+            passed_tests + skipped_tests + failed_tests.len()
         );
         println!("Failed tests:");
         for (name, error) in &failed_tests {
